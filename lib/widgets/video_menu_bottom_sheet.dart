@@ -135,7 +135,23 @@ class VideoMenuBottomSheet extends StatefulWidget {
         originalResults: originalResults,
         onSourceSelected: onSourceSelected,
       ),
-    ).whenComplete(transitionController.dispose);
+    ).whenComplete(() {
+      // showModalBottomSheet 返回的 Future 在弹窗“开始关闭”（pop 触发）时就完成，
+      // 而此时退出动画仍在用这个 controller 播放（约 200ms）。若在这里立即 dispose，
+      // 会打断关闭动画并让遮罩层（AnimatedModalBarrier）失效，表现为“菜单无法关闭且可穿透蒙层”。
+      // 因此等退出动画真正结束（dismissed）后再释放，避免内存泄漏的同时不破坏关闭流程。
+      if (transitionController.status == AnimationStatus.dismissed) {
+        transitionController.dispose();
+      } else {
+        void releaseWhenDismissed(AnimationStatus status) {
+          if (status == AnimationStatus.dismissed) {
+            transitionController.removeStatusListener(releaseWhenDismissed);
+            transitionController.dispose();
+          }
+        }
+        transitionController.addStatusListener(releaseWhenDismissed);
+      }
+    });
   }
 
   @override
