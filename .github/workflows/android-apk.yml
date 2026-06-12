@@ -12,6 +12,9 @@ on:
 permissions:
   contents: read
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: Build release APK
@@ -63,13 +66,7 @@ jobs:
             echo "keyPassword=$ANDROID_KEY_PASSWORD"
           } > android/key.properties
 
-      - name: Build universal APK
-        run: |
-          flutter build apk --release \
-            --obfuscate \
-            --split-debug-info=build/app/outputs/symbols
-
-      - name: Build split APKs
+      - name: Build release APKs
         run: |
           flutter build apk --release \
             --target-platform android-arm64,android-arm \
@@ -82,7 +79,6 @@ jobs:
         run: |
           version="$(grep '^version:' pubspec.yaml | sed 's/version: *//' | cut -d'+' -f1)"
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk "dist/selene-${version}-universal.apk"
           cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk "dist/selene-${version}-arm64-v8a.apk"
           cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk "dist/selene-${version}-armeabi-v7a.apk"
 
