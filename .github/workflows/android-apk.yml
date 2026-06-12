@@ -70,12 +70,43 @@ jobs:
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release-key.jks
+          set -euo pipefail
+          keystore_path="android/app/release-key.jks"
+
+          # Strip whitespace/newlines (common when pasting base64 into GitHub Secrets).
+          clean_base64="$(printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]')"
+          printf '%s' "$clean_base64" | base64 --decode > "$keystore_path"
+
+          if [ ! -s "$keystore_path" ]; then
+            echo "::error::Decoded keystore is empty. Re-encode the binary keystore file, not its path or text content."
+            exit 1
+          fi
+
+          store_type=""
+          if keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+            store_type="JKS"
+          elif keytool -list -keystore "$keystore_path" -storetype PKCS12 -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+            store_type="PKCS12"
+          else
+            echo "::error::Keystore could not be read. Re-create ANDROID_KEYSTORE_BASE64 from the original .jks/.p12 file."
+            echo "Linux/macOS: base64 -w 0 release-key.jks"
+            echo "Windows PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes('release-key.jks'))"
+            keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" || true
+            exit 1
+          fi
+
+          if ! keytool -list -keystore "$keystore_path" -storetype "$store_type" -storepass "$ANDROID_KEYSTORE_PASSWORD" -alias "$ANDROID_KEY_ALIAS" > /dev/null 2>&1; then
+            echo "::error::Key alias '$ANDROID_KEY_ALIAS' was not found in the keystore."
+            keytool -list -keystore "$keystore_path" -storetype "$store_type" -storepass "$ANDROID_KEYSTORE_PASSWORD" || true
+            exit 1
+          fi
+
           {
             echo "storeFile=release-key.jks"
             echo "storePassword=$ANDROID_KEYSTORE_PASSWORD"
             echo "keyAlias=$ANDROID_KEY_ALIAS"
             echo "keyPassword=$ANDROID_KEY_PASSWORD"
+            echo "storeType=$store_type"
           } > android/key.properties
 
       - name: Build release APKs

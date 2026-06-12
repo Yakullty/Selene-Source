@@ -46,6 +46,7 @@ android {
                 storePassword = properties.getProperty("storePassword")
                 keyAlias = properties.getProperty("keyAlias")
                 keyPassword = properties.getProperty("keyPassword")
+                properties.getProperty("storeType")?.let { storeType = it }
             }
         }
     }
