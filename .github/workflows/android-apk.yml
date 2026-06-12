@@ -40,9 +40,16 @@ jobs:
         run: flutter pub get
 
       - name: Accept Android SDK licenses and install NDK
+        env:
+          ANDROID_HOME: /usr/local/lib/android/sdk
+          ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
         run: |
-          yes | sdkmanager --licenses
-          sdkmanager "ndk;29.0.14033849"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          "$SDKMANAGER" --install "cmdline-tools;latest"
+          yes | "$SDKMANAGER" --licenses
+          "$SDKMANAGER" --install "ndk;29.0.14033849"
+          yes | "$SDKMANAGER" --licenses
+          ls -la "$ANDROID_HOME/ndk"
 
       - name: Validate Android signing secrets
         env:
