@@ -39,6 +39,11 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
 
+      - name: Accept Android SDK licenses and install NDK
+        run: |
+          yes | sdkmanager --licenses
+          sdkmanager "ndk;29.0.14033849"
+
       - name: Validate Android signing secrets
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
