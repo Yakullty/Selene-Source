@@ -27,6 +27,7 @@ class VideoPlayerWidget extends StatefulWidget {
   final Function(bool isWebFullscreen)? onWebFullscreenChanged;
   final VoidCallback? onExitFullScreen;
   final bool live;
+  final bool liveTimeShiftEnabled;
   final Function(bool isPipMode)? onPipModeChanged;
 
   const VideoPlayerWidget({
@@ -49,6 +50,7 @@ class VideoPlayerWidget extends StatefulWidget {
     this.onWebFullscreenChanged,
     this.onExitFullScreen,
     this.live = false,
+    this.liveTimeShiftEnabled = false,
     this.onPipModeChanged,
   });
 
@@ -499,6 +501,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget>
                         },
                         onExitFullScreen: widget.onExitFullScreen,
                         live: widget.live,
+                        liveTimeShiftEnabled: widget.liveTimeShiftEnabled,
                         playbackSpeedListenable: _playbackSpeed,
                         onSetSpeed: _setPlaybackSpeed,
                       )
@@ -520,6 +523,7 @@ class _VideoPlayerWidgetState extends State<VideoPlayerWidget>
                         sourceName: widget.sourceName,
                         onExitFullScreen: widget.onExitFullScreen,
                         live: widget.live,
+                        liveTimeShiftEnabled: widget.liveTimeShiftEnabled,
                         playbackSpeedListenable: _playbackSpeed,
                         onSetSpeed: _setPlaybackSpeed,
                         onEnterPipMode: _enterPipMode,

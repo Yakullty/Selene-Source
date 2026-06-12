@@ -68,6 +68,7 @@ class PCPlayerControls extends StatefulWidget {
   final Function(VoidCallback)? onExitWebFullscreenCallbackReady;
   final VoidCallback? onExitFullScreen;
   final bool live;
+  final bool liveTimeShiftEnabled;
   final ValueNotifier<double> playbackSpeedListenable;
   final Future<void> Function(double speed) onSetSpeed;
 
@@ -91,6 +92,7 @@ class PCPlayerControls extends StatefulWidget {
     this.onExitWebFullscreenCallbackReady,
     this.onExitFullScreen,
     this.live = false,
+    this.liveTimeShiftEnabled = false,
     required this.playbackSpeedListenable,
     required this.onSetSpeed,
   });
@@ -122,6 +124,13 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
   double _volumeBeforeMute = 1.0;
   Timer? _volumeMenuHideTimer;
   final FocusNode _focusNode = FocusNode();
+
+  bool get _canTimeShift =>
+      widget.live &&
+      widget.liveTimeShiftEnabled &&
+      widget.player.state.duration.inMilliseconds > 0;
+
+  bool get _canSeek => !widget.live || _canTimeShift;
 
   @override
   void initState() {
@@ -267,7 +276,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
 
   void _onBlankAreaTap() {
     // live 模式下不响应空白区域点击
-    if (widget.live) {
+    if (widget.live && !_canTimeShift) {
       return;
     }
     // 单击空白区域切换播放/暂停
@@ -307,7 +316,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
   }
 
   void _onSwipeStart(DragStartDetails details) {
-    if (!mounted || widget.live) return;
+    if (!mounted || !_canSeek) return;
 
     setState(() {
       _isSeekingViaSwipe = true;
@@ -320,7 +329,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
   }
 
   void _onSwipeUpdate(DragUpdateDetails details) {
-    if (!mounted || !_isSeekingViaSwipe || _screenSize == null || widget.live) return;
+    if (!mounted || !_isSeekingViaSwipe || _screenSize == null || !_canSeek) return;
 
     final screenWidth = _screenSize!.width;
     final swipeDistance = details.globalPosition.dx - _swipeStartX;
@@ -340,7 +349,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
   }
 
   void _onSwipeEnd(DragEndDetails details) {
-    if (!mounted || !_isSeekingViaSwipe || widget.live) return;
+    if (!mounted || !_isSeekingViaSwipe || !_canSeek) return;
 
     if (_dragPosition != null) {
       widget.player.seek(_dragPosition!);
@@ -394,7 +403,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
 
   Future<void> _showDLNADialog() async {
     if (widget.player.state.playing) {
-      if (!widget.live) {
+      if (!widget.live || _canTimeShift) {
         widget.player.pause();
       }
       widget.onPause?.call();
@@ -464,6 +473,9 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
       }
       // 左方向键快退 10 秒
       else if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
+        if (!_canSeek) {
+          return KeyEventResult.ignored;
+        }
         final currentPosition = widget.player.state.position;
         final newPosition = currentPosition - const Duration(seconds: 10);
         final clampedPosition = Duration(
@@ -477,6 +489,9 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
       }
       // 右方向键快进 10 秒
       else if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
+        if (!_canSeek) {
+          return KeyEventResult.ignored;
+        }
         final currentPosition = widget.player.state.position;
         final duration = widget.player.state.duration;
         final newPosition = currentPosition + const Duration(seconds: 10);
@@ -762,6 +777,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
                       dragPosition: _dragPosition,
                       isSeekingViaSwipe: _isSeekingViaSwipe,
                       live: widget.live,
+                      timeShiftEnabled: _canTimeShift,
                     ),
                   ),
                 ),
@@ -885,7 +901,7 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
                               ),
                             ),
                           ),
-                          if (!widget.live)
+                          if (!widget.live || _canTimeShift)
                             Expanded(
                               child: _buildPositionIndicator(),
                             ),
@@ -933,7 +949,26 @@ class _PCPlayerControlsState extends State<PCPlayerControls> {
                                 ),
                               ),
                             ),
-                          if (widget.live) const Spacer(),
+                          if (widget.live && !_canTimeShift) const Spacer(),
+                          if (_canTimeShift)
+                            HoverButton(
+                              onTap: () {
+                                _onUserInteraction();
+                                widget.player.seek(widget.player.state.duration);
+                              },
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 8,
+                              ),
+                              child: const Text(
+                                'LIVE',
+                                style: TextStyle(
+                                  color: Colors.red,
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ),
                           // 网页全屏按钮（仅在非真全屏时显示）
                           if (!_isFullscreen)
                             HoverButton(
@@ -1318,6 +1353,7 @@ class CustomVideoProgressBar extends StatefulWidget {
   final Duration? dragPosition;
   final bool isSeekingViaSwipe;
   final bool live;
+  final bool timeShiftEnabled;
 
   const CustomVideoProgressBar({
     super.key,
@@ -1329,6 +1365,7 @@ class CustomVideoProgressBar extends StatefulWidget {
     this.dragPosition,
     this.isSeekingViaSwipe = false,
     this.live = false,
+    this.timeShiftEnabled = false,
   });
 
   @override
@@ -1362,37 +1399,38 @@ class _CustomVideoProgressBarState extends State<CustomVideoProgressBar> {
   Widget build(BuildContext context) {
     final duration = widget.player.state.duration;
     final position = widget.dragPosition ?? widget.player.state.position;
+    final canSeek = !widget.live || widget.timeShiftEnabled;
 
     double value = 0.0;
     if (duration.inMilliseconds > 0) {
       // live 模式下进度固定在最后
-      if (widget.live) {
+      if (widget.live && !widget.timeShiftEnabled) {
         value = 1.0;
       } else {
         value = position.inMilliseconds / duration.inMilliseconds;
       }
     }
 
-    if (_isDragging && !widget.live) {
+    if (_isDragging && canSeek) {
       value = _dragValue;
     }
 
     return MouseRegion(
-      cursor: widget.live ? MouseCursor.defer : SystemMouseCursors.click,
+      cursor: canSeek ? SystemMouseCursors.click : MouseCursor.defer,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
-        onHorizontalDragStart: widget.live ? null : (details) {
+        onHorizontalDragStart: !canSeek ? null : (details) {
           _isDragging = true;
           widget.onDragStart?.call();
           _updateDragPosition(details.localPosition.dx, context);
         },
-        onHorizontalDragUpdate: widget.live ? null : (details) {
+        onHorizontalDragUpdate: !canSeek ? null : (details) {
           if (_isDragging) {
             widget.onDragUpdate?.call();
             _updateDragPosition(details.localPosition.dx, context);
           }
         },
-        onHorizontalDragEnd: widget.live ? null : (details) async {
+        onHorizontalDragEnd: !canSeek ? null : (details) async {
           if (_isDragging) {
             final seekPosition = Duration(
                 milliseconds: (_dragValue * duration.inMilliseconds).round());
@@ -1415,7 +1453,7 @@ class _CustomVideoProgressBarState extends State<CustomVideoProgressBar> {
             widget.onDragEnd?.call();
           }
         },
-        onTapDown: widget.live ? null : (details) async {
+        onTapDown: !canSeek ? null : (details) async {
           widget.onDragStart?.call();
           _updateDragPosition(details.localPosition.dx, context);
           final seekPosition = Duration(

@@ -26,6 +26,7 @@ class MobilePlayerControls extends StatefulWidget {
   final String? sourceName;
   final VoidCallback? onExitFullScreen;
   final bool live;
+  final bool liveTimeShiftEnabled;
   final ValueNotifier<double> playbackSpeedListenable;
   final Future<void> Function(double speed) onSetSpeed;
   final Future<void> Function() onEnterPipMode;
@@ -50,6 +51,7 @@ class MobilePlayerControls extends StatefulWidget {
     this.sourceName,
     this.onExitFullScreen,
     this.live = false,
+    this.liveTimeShiftEnabled = false,
     required this.playbackSpeedListenable,
     required this.onSetSpeed,
     required this.onEnterPipMode,
@@ -80,6 +82,13 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
   Timer? _brightnessHideTimer;
   Timer? _timeUpdateTimer;
   String _currentTime = '';
+
+  bool get _canTimeShift =>
+      widget.live &&
+      widget.liveTimeShiftEnabled &&
+      _duration.inMilliseconds > 0;
+
+  bool get _canSeek => !widget.live || _canTimeShift;
 
   @override
   void initState() {
@@ -231,7 +240,7 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
   }
 
   void _onSwipeStart(DragStartDetails details) {
-    if (_isLocked || widget.live) return;
+    if (_isLocked || !_canSeek) return;
     _screenSize ??= MediaQuery.of(context).size;
     setState(() {
       _isSeekingViaSwipe = true;
@@ -244,7 +253,7 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
   }
 
   void _onSwipeUpdate(DragUpdateDetails details) {
-    if (_isLocked || !_isSeekingViaSwipe || widget.live || _screenSize == null)
+    if (_isLocked || !_isSeekingViaSwipe || !_canSeek || _screenSize == null)
       return;
     final screenWidth = _screenSize!.width;
     final swipeDistance = details.globalPosition.dx - _swipeStartX;
@@ -263,7 +272,7 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
   }
 
   void _onSwipeEnd(DragEndDetails details) {
-    if (_isLocked || !_isSeekingViaSwipe || widget.live) return;
+    if (_isLocked || !_isSeekingViaSwipe || !_canSeek) return;
     if (_dragPosition != null) {
       widget.player.seek(_dragPosition!);
     }
@@ -788,6 +797,7 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
             child: _MobileVideoProgressBar(
               player: widget.player,
               live: widget.live,
+              timeShiftEnabled: _canTimeShift,
               onDragStart: () {
                 setState(() => _controlsVisible = true);
                 _hideTimer?.cancel();
@@ -862,7 +872,7 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
                       ),
                     ),
                   ),
-                if (!widget.live)
+                if (!widget.live || _canTimeShift)
                   Expanded(
                     child: Padding(
                       padding: const EdgeInsets.only(left: 8.0, right: 8.0),
@@ -873,7 +883,29 @@ class _MobilePlayerControlsState extends State<MobilePlayerControls> {
                       ),
                     ),
                   ),
-                if (widget.live) const Spacer(),
+                if (widget.live && !_canTimeShift) const Spacer(),
+                if (_canTimeShift)
+                  GestureDetector(
+                    onTap: () {
+                      _onUserInteraction();
+                      widget.player.seek(_duration);
+                    },
+                    behavior: HitTestBehavior.opaque,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: const Text(
+                        'LIVE',
+                        style: TextStyle(
+                          color: Colors.red,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
                 if (!widget.live)
                   GestureDetector(
                     onTap: () async {
@@ -1133,6 +1165,7 @@ class _MobileVideoProgressBar extends StatefulWidget {
   final Duration? dragPosition;
   final bool isSeekingViaSwipe;
   final bool live;
+  final bool timeShiftEnabled;
 
   const _MobileVideoProgressBar({
     required this.player,
@@ -1143,6 +1176,7 @@ class _MobileVideoProgressBar extends StatefulWidget {
     this.dragPosition,
     this.isSeekingViaSwipe = false,
     this.live = false,
+    this.timeShiftEnabled = false,
   });
 
   @override
@@ -1176,30 +1210,31 @@ class _MobileVideoProgressBarState extends State<_MobileVideoProgressBar> {
   Widget build(BuildContext context) {
     final duration = widget.player.state.duration;
     final position = widget.dragPosition ?? widget.player.state.position;
+    final canSeek = !widget.live || widget.timeShiftEnabled;
 
     double value = 0.0;
     if (duration.inMilliseconds > 0) {
-      if (widget.live) {
+      if (widget.live && !widget.timeShiftEnabled) {
         value = 1.0;
       } else {
         value = position.inMilliseconds / duration.inMilliseconds;
       }
     }
 
-    if (_isDragging && !widget.live) {
+    if (_isDragging && canSeek) {
       value = _dragValue;
     }
 
     return GestureDetector(
       behavior: HitTestBehavior.opaque,
-      onHorizontalDragStart: widget.live
+      onHorizontalDragStart: !canSeek
           ? null
           : (details) {
               _isDragging = true;
               widget.onDragStart?.call();
               _updateDrag(details.localPosition.dx, context);
             },
-      onHorizontalDragUpdate: widget.live
+      onHorizontalDragUpdate: !canSeek
           ? null
           : (details) {
               if (_isDragging) {
@@ -1207,7 +1242,7 @@ class _MobileVideoProgressBarState extends State<_MobileVideoProgressBar> {
                 _updateDrag(details.localPosition.dx, context);
               }
             },
-      onHorizontalDragEnd: widget.live
+      onHorizontalDragEnd: !canSeek
           ? null
           : (details) async {
               if (_isDragging) {
@@ -1233,7 +1268,7 @@ class _MobileVideoProgressBarState extends State<_MobileVideoProgressBar> {
                 widget.onDragEnd?.call();
               }
             },
-      onTapDown: widget.live
+      onTapDown: !canSeek
           ? null
           : (details) async {
               widget.onDragStart?.call();
@@ -1295,7 +1330,7 @@ class _MobileVideoProgressBarState extends State<_MobileVideoProgressBar> {
                       ),
                     ),
                   ),
-                  if (!widget.live)
+                  if (canSeek)
                     Positioned(
                       left: thumbPosition - 8,
                       top: 4,
@@ -1334,7 +1369,7 @@ class _MobileVideoProgressBarState extends State<_MobileVideoProgressBar> {
     final width = box.size.width;
     final value = (dx / width).clamp(0.0, 1.0);
     setState(() => _dragValue = value);
-    if (!widget.live) {
+    if (!widget.live || widget.timeShiftEnabled) {
       final duration = widget.player.state.duration;
       final position =
           Duration(milliseconds: (value * duration.inMilliseconds).round());
