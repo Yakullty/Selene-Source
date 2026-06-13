@@ -7,6 +7,7 @@ import '../models/live_channel.dart';
 import '../models/live_source.dart';
 import '../models/epg_program.dart';
 import '../services/live_service.dart';
+import '../utils/catchup_url_builder.dart';
 import '../utils/device_utils.dart';
 import '../utils/font_utils.dart';
 import '../services/theme_service.dart';
@@ -268,39 +269,14 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           : _currentChannel.name;
 
   String? _buildCatchupUrl(EpgProgram program) {
-    final template = _currentChannel.catchupSource;
-    if (template.isEmpty) {
-      return null;
-    }
-
-    final startSeconds = program.startTime.millisecondsSinceEpoch ~/ 1000;
-    final endSeconds = program.endTime.millisecondsSinceEpoch ~/ 1000;
-    final durationSeconds = endSeconds - startSeconds;
-    final ymdhms = _formatCatchupDate(program.startTime, utc: false);
-    final utcYmdhms = _formatCatchupDate(program.startTime, utc: true);
-
-    return template
-        .replaceAll(r'${start}', startSeconds.toString())
-        .replaceAll(r'${timestamp}', startSeconds.toString())
-        .replaceAll(r'${begin}', startSeconds.toString())
-        .replaceAll(r'${end}', endSeconds.toString())
-        .replaceAll(r'${duration}', durationSeconds.toString())
-        .replaceAll(r'${offset}', durationSeconds.toString())
-        .replaceAll(r'${YmdHMS}', ymdhms)
-        .replaceAll(r'${utc}', utcYmdhms);
+    return CatchupUrlBuilder.build(_currentChannel, program);
   }
 
-  String _formatCatchupDate(DateTime value, {required bool utc}) {
-    final date = utc ? value.toUtc() : value;
-    String two(int n) => n.toString().padLeft(2, '0');
-    return '${date.year}${two(date.month)}${two(date.day)}'
-        '${two(date.hour)}${two(date.minute)}${two(date.second)}';
-  }
-
-  void _showMessage(String message) {
+  void _showMessage(String message, {BuildContext? messengerContext}) {
+    final targetContext = messengerContext ?? context;
     if (!mounted) return;
 
-    ScaffoldMessenger.of(context).showSnackBar(
+    ScaffoldMessenger.of(targetContext).showSnackBar(
       SnackBar(
         content: Text(
           message,
@@ -316,11 +292,18 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     );
   }
 
-  void _playArchiveProgram(EpgProgram program) {
+  void _playArchiveProgram(EpgProgram program, {BuildContext? messengerContext}) {
     final archiveUrl = _buildCatchupUrl(program);
     if (archiveUrl == null || archiveUrl.isEmpty) {
-      _showMessage('该频道没有提供节目回看地址');
+      _showMessage(
+        '该频道没有提供节目回看地址',
+        messengerContext: messengerContext,
+      );
       return;
+    }
+
+    if (messengerContext != null && Navigator.of(messengerContext).canPop()) {
+      Navigator.of(messengerContext).pop();
     }
 
     setState(() {
@@ -1497,57 +1480,60 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       barrierColor: Colors.black26,
-      builder: (context) {
-        return Container(
-          height: panelHeight,
-          width: double.infinity,
-          decoration: BoxDecoration(
-            color: theme.scaffoldBackgroundColor,
-          ),
-          child: Column(
-            children: [
-              // 标题栏
-              Container(
-                padding: const EdgeInsets.all(16),
-                decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(
-                      color: themeService.isDarkMode
-                          ? const Color(0xFF333333)
-                          : const Color(0xFFe0e0e0),
+      builder: (sheetContext) {
+        return Scaffold(
+          backgroundColor: theme.scaffoldBackgroundColor,
+          body: SizedBox(
+            height: panelHeight,
+            width: double.infinity,
+            child: Column(
+              children: [
+                // 标题栏
+                Container(
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    border: Border(
+                      bottom: BorderSide(
+                        color: themeService.isDarkMode
+                            ? const Color(0xFF333333)
+                            : const Color(0xFFe0e0e0),
+                      ),
                     ),
                   ),
-                ),
-                child: Row(
-                  children: [
-                    Text(
-                      '节目单',
-                      style: FontUtils.poppins(
-                        fontSize: 18,
-                        fontWeight: FontWeight.w600,
-                        color: themeService.isDarkMode
-                            ? Colors.white
-                            : const Color(0xFF2c3e50),
+                  child: Row(
+                    children: [
+                      Text(
+                        '节目单',
+                        style: FontUtils.poppins(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w600,
+                          color: themeService.isDarkMode
+                              ? Colors.white
+                              : const Color(0xFF2c3e50),
+                        ),
                       ),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      icon: Icon(
-                        Icons.close,
-                        color: themeService.isDarkMode
-                            ? Colors.white
-                            : const Color(0xFF2c3e50),
+                      const Spacer(),
+                      IconButton(
+                        icon: Icon(
+                          Icons.close,
+                          color: themeService.isDarkMode
+                              ? Colors.white
+                              : const Color(0xFF2c3e50),
+                        ),
+                        onPressed: () => Navigator.pop(sheetContext),
                       ),
-                      onPressed: () => Navigator.pop(context),
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              // 节目列表
-              Expanded(
-                child: _buildVerticalProgramList(themeService),
-              ),
-            ],
+                // 节目列表
+                Expanded(
+                  child: _buildVerticalProgramList(
+                    themeService,
+                    messengerContext: sheetContext,
+                  ),
+                ),
+              ],
+            ),
           ),
         );
       },
@@ -1558,7 +1544,10 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   /// 构建垂直节目列表
-  Widget _buildVerticalProgramList(ThemeService themeService) {
+  Widget _buildVerticalProgramList(
+    ThemeService themeService, {
+    BuildContext? messengerContext,
+  }) {
     if (_isLoadingEpg) {
       return Center(
         child: Padding(
@@ -1621,7 +1610,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         final program = _programs![index];
         // 给当前正在播放的节目添加 key，用于滚动定位
         final itemKey = program.isLive ? _currentProgramKey : null;
-        return _buildVerticalProgramItem(program, themeService, key: itemKey);
+        return _buildVerticalProgramItem(
+          program,
+          themeService,
+          key: itemKey,
+          messengerContext: messengerContext,
+        );
       },
     );
   }
@@ -1631,6 +1625,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
     EpgProgram program,
     ThemeService themeService, {
     Key? key,
+    BuildContext? messengerContext,
   }) {
     final now = DateTime.now();
     final isLive = program.isLive;
@@ -1668,7 +1663,12 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
     return InkWell(
       key: key,
-      onTap: isPast ? () => _playArchiveProgram(program) : null,
+      onTap: isPast
+          ? () => _playArchiveProgram(
+                program,
+                messengerContext: messengerContext,
+              )
+          : null,
       child: Container(
         margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
         padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
