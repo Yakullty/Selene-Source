@@ -297,6 +297,25 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         '${two(date.hour)}${two(date.minute)}${two(date.second)}';
   }
 
+  void _showMessage(String message) {
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          message,
+          style: FontUtils.poppins(color: Colors.white),
+        ),
+        backgroundColor: const Color(0xFF3498DB),
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(8),
+        ),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
   void _playArchiveProgram(EpgProgram program) {
     final archiveUrl = _buildCatchupUrl(program);
     if (archiveUrl == null || archiveUrl.isEmpty) {
