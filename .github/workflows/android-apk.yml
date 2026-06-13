@@ -82,16 +82,51 @@ jobs:
             exit 1
           fi
 
+          decoded_size="$(wc -c < "$keystore_path" | tr -d ' ')"
+          base64_length="${#clean_base64}"
+          file_head="$(head -c 4 "$keystore_path" | od -An -tx1 | tr -d ' \n')"
+          echo "Decoded keystore size: ${decoded_size} bytes"
+          echo "Base64 secret length: ${base64_length} chars"
+          echo "File header (hex): ${file_head}"
+
+          case "$file_head" in
+            feedfeed*) echo "Header looks like JKS." ;;
+            3082*|3080*) echo "Header looks like PKCS12." ;;
+            *)
+              echo "::warning::Unexpected file header. Secret may contain text/path, certutil output, or corrupted base64."
+              echo "First 32 bytes:"
+              head -c 32 "$keystore_path" | od -An -tx1
+              ;;
+          esac
+
           store_type=""
-          if keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null 2>&1; then
+          jks_error=""
+          p12_error=""
+          if keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null 2>&1; then
             store_type="JKS"
-          elif keytool -list -keystore "$keystore_path" -storetype PKCS12 -storepass "$ANDROID_KEYSTORE_PASSWORD" > /dev/null 2>&1; then
-            store_type="PKCS12"
-          else
-            echo "::error::Keystore could not be read. Re-create ANDROID_KEYSTORE_BASE64 from the original .jks/.p12 file."
-            echo "Linux/macOS: base64 -w 0 release-key.jks"
-            echo "Windows PowerShell: [Convert]::ToBase64String([IO.File]::ReadAllBytes('release-key.jks'))"
-            keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" || true
+          fi
+
+          if [ -z "$store_type" ]; then
+            if keytool -list -keystore "$keystore_path" -storetype PKCS12 -storepass "$ANDROID_KEYSTORE_PASSWORD" >/dev/null 2>&1; then
+              store_type="PKCS12"
+            else
+              p12_error="$(keytool -list -keystore "$keystore_path" -storetype PKCS12 -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1 || true)"
+            fi
+          fi
+
+          if [ -z "$store_type" ]; then
+            jks_error="$(keytool -list -keystore "$keystore_path" -storepass "$ANDROID_KEYSTORE_PASSWORD" 2>&1 || true)"
+            echo "::error::Keystore could not be read."
+            echo "JKS attempt: $jks_error"
+            echo "PKCS12 attempt: $p12_error"
+            if echo "$jks_error$p12_error" | grep -qi "password was incorrect"; then
+              echo "::error::ANDROID_KEYSTORE_PASSWORD appears to be wrong."
+            else
+              echo "::error::ANDROID_KEYSTORE_BASE64 is invalid. Re-encode the original .jks/.p12 file."
+              echo "Windows: pwsh ./scripts/encode-android-keystore.ps1 -KeystorePath 'path\\selene-release-key.jks' -StorePassword 'your-password'"
+              echo "Linux/macOS: base64 -w 0 selene-release-key.jks"
+              echo "Do NOT use certutil -encode (it adds BEGIN/END headers)."
+            fi
             exit 1
           fi
 
