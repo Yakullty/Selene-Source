@@ -217,6 +217,15 @@ class LiveService {
             RegExp(r'group-title="([^"]*)"').firstMatch(line);
         final group = groupTitleMatch?.group(1) ?? '无分组';
 
+        final catchupMatch = RegExp(r'catchup="([^"]*)"').firstMatch(line);
+        final catchup = catchupMatch?.group(1) ?? '';
+        final catchupSourceMatch =
+            RegExp(r'catchup-source="([^"]*)"').firstMatch(line);
+        final catchupSource = catchupSourceMatch?.group(1) ?? '';
+        final catchupDaysMatch =
+            RegExp(r'catchup-days="([^"]*)"').firstMatch(line);
+        final catchupDays = int.tryParse(catchupDaysMatch?.group(1) ?? '');
+
         // 提取标题（#EXTINF 行最后的逗号后面的内容）
         // 使用 lastIndexOf 更健壮，避免频道名中包含逗号的问题
         final commaIndex = line.lastIndexOf(',');
@@ -240,6 +249,9 @@ class LiveService {
               logo: logo,
               group: group,
               url: url,
+              catchup: catchup,
+              catchupSource: catchupSource,
+              catchupDays: catchupDays,
             ));
             channelIndex++;
           }

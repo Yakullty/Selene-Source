@@ -37,7 +37,9 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   late LiveChannel _currentChannel;
   late LiveSource _currentSource;
   List<EpgProgram>? _programs;
+  EpgProgram? _archiveProgram;
   bool _isLoadingEpg = false;
+  bool _isArchivePlayback = false;
   List<LiveChannel> _allChannels = [];
   List<LiveSource> _allSources = [];
   String _selectedGroup = '全部';
@@ -160,6 +162,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   void _switchChannel(LiveChannel channel) {
     setState(() {
       _currentChannel = channel;
+      _archiveProgram = null;
+      _isArchivePlayback = false;
       _isLoading = true;
       _loadingMessage = '切换频道...';
     });
@@ -249,6 +253,74 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
   }
 
   /// 滚动到当前正在播放的节目（横向列表）
+  bool get _hasProgramGuide => _programs != null && _programs!.isNotEmpty;
+
+  bool get _isTvLiveMode => !_isArchivePlayback && _hasProgramGuide;
+
+  String get _currentPlaybackUrl =>
+      _isArchivePlayback && _archiveProgram != null
+          ? _buildCatchupUrl(_archiveProgram!) ?? _currentChannel.url
+          : _currentChannel.url;
+
+  String get _currentPlaybackTitle =>
+      _isArchivePlayback && _archiveProgram != null
+          ? '${_currentChannel.name} - ${_archiveProgram!.title}'
+          : _currentChannel.name;
+
+  String? _buildCatchupUrl(EpgProgram program) {
+    final template = _currentChannel.catchupSource;
+    if (template.isEmpty) {
+      return null;
+    }
+
+    final startSeconds = program.startTime.millisecondsSinceEpoch ~/ 1000;
+    final endSeconds = program.endTime.millisecondsSinceEpoch ~/ 1000;
+    final durationSeconds = endSeconds - startSeconds;
+    final ymdhms = _formatCatchupDate(program.startTime, utc: false);
+    final utcYmdhms = _formatCatchupDate(program.startTime, utc: true);
+
+    return template
+        .replaceAll(r'${start}', startSeconds.toString())
+        .replaceAll(r'${timestamp}', startSeconds.toString())
+        .replaceAll(r'${begin}', startSeconds.toString())
+        .replaceAll(r'${end}', endSeconds.toString())
+        .replaceAll(r'${duration}', durationSeconds.toString())
+        .replaceAll(r'${offset}', durationSeconds.toString())
+        .replaceAll(r'${YmdHMS}', ymdhms)
+        .replaceAll(r'${utc}', utcYmdhms);
+  }
+
+  String _formatCatchupDate(DateTime value, {required bool utc}) {
+    final date = utc ? value.toUtc() : value;
+    String two(int n) => n.toString().padLeft(2, '0');
+    return '${date.year}${two(date.month)}${two(date.day)}'
+        '${two(date.hour)}${two(date.minute)}${two(date.second)}';
+  }
+
+  void _playArchiveProgram(EpgProgram program) {
+    final archiveUrl = _buildCatchupUrl(program);
+    if (archiveUrl == null || archiveUrl.isEmpty) {
+      _showMessage('该频道没有提供节目回看地址');
+      return;
+    }
+
+    setState(() {
+      _archiveProgram = program;
+      _isArchivePlayback = true;
+      _isLoading = true;
+      _loadingMessage = '正在加载节目回看...';
+    });
+  }
+
+  void _returnToLive() {
+    setState(() {
+      _archiveProgram = null;
+      _isArchivePlayback = false;
+      _isLoading = true;
+      _loadingMessage = '正在返回直播...';
+    });
+  }
+
   void _scrollToCurrentProgram() {
     if (_programs == null || _programs!.isEmpty) {
       return;
@@ -598,19 +670,19 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
 
   /// 构建播放器组件
   Widget _buildPlayerWidget() {
-    final videoUrl = _currentChannel.url;
+    final videoUrl = _currentPlaybackUrl;
     return VideoPlayerWidget(
       surface: DeviceUtils.isPC()
           ? VideoPlayerSurface.desktop
           : VideoPlayerSurface.mobile,
-      key: ValueKey(_currentChannel.id),
+      key: ValueKey('${_currentChannel.id}-$_isArchivePlayback'),
       url: videoUrl,
       headers: <String, String>{
         'User-Agent': _currentSource.ua.isNotEmpty
             ? _currentSource.ua
             : 'AptvPlayer/1.4.10',
       },
-      videoTitle: _currentChannel.name,
+      videoTitle: _currentPlaybackTitle,
       onBackPressed:
           _isWebFullscreen ? _exitWebFullscreen : () => Navigator.pop(context),
       onControllerCreated: (controller) {
@@ -626,8 +698,8 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
         _scrollToCurrentProgram();
       },
       onReady: _onVideoPlayerReady,
-      live: true,
-      liveTimeShiftEnabled: true,
+      live: !_isArchivePlayback,
+      liveTimeShiftEnabled: !_isTvLiveMode,
     );
   }
 
@@ -1282,7 +1354,7 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             child: Row(
               children: [
                 Text(
-                  '正在播放: ',
+                  _isArchivePlayback ? '正在回看: ' : '正在播放: ',
                   style: FontUtils.poppins(
                     fontSize: 14,
                     color: themeService.isDarkMode
@@ -1304,7 +1376,20 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
                           maxLines: 1,
                           overflow: TextOverflow.ellipsis,
                         )
-                      : currentProgram != null
+                      : _isArchivePlayback && _archiveProgram != null
+                          ? Text(
+                              _archiveProgram!.title,
+                              style: FontUtils.poppins(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w500,
+                                color: themeService.isDarkMode
+                                    ? Colors.white
+                                    : const Color(0xFF2c3e50),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            )
+                          : currentProgram != null
                           ? Text(
                               currentProgram.title,
                               style: FontUtils.poppins(
@@ -1334,6 +1419,18 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
             ),
           ),
           const SizedBox(width: 20),
+          if (_isArchivePlayback)
+            _HoverButton(
+              onTap: _returnToLive,
+              child: Text(
+                '返回直播',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF27ae60),
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          if (_isArchivePlayback) const SizedBox(width: 20),
           // 查看节目单按钮
           _HoverButton(
             onTap: () => _showProgramListDropdown(theme, themeService),
@@ -1550,36 +1647,39 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           : const Color(0xFF2563eb);
     }
 
-    return Container(
+    return InkWell(
       key: key,
-      margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-      padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
-      child: Row(
-        children: [
-          // 时间
-          Text(
-            program.timeRange,
-            style: FontUtils.sourceCodePro(
-              fontSize: 13,
-              color: timeColor,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(width: 16),
-          // 节目标题
-          Expanded(
-            child: Text(
-              program.title,
-              style: FontUtils.poppins(
-                fontSize: 14,
-                fontWeight: isLive ? FontWeight.w600 : FontWeight.w400,
-                color: textColor,
+      onTap: isPast ? () => _playArchiveProgram(program) : null,
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        padding: const EdgeInsets.fromLTRB(0, 12, 12, 12),
+        child: Row(
+          children: [
+            // 时间
+            Text(
+              program.timeRange,
+              style: FontUtils.sourceCodePro(
+                fontSize: 13,
+                color: timeColor,
+                fontWeight: FontWeight.w600,
               ),
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
             ),
-          ),
-        ],
+            const SizedBox(width: 16),
+            // 节目标题
+            Expanded(
+              child: Text(
+                program.title,
+                style: FontUtils.poppins(
+                  fontSize: 14,
+                  fontWeight: isLive ? FontWeight.w600 : FontWeight.w400,
+                  color: textColor,
+                ),
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1775,70 +1875,74 @@ class _LivePlayerScreenState extends State<LivePlayerScreen>
           : const Color(0xFF2563eb);
     }
 
-    return Container(
+    return InkWell(
       key: key,
-      width: 120,
-      height: 72,
-      margin: const EdgeInsets.only(right: 8),
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: backgroundColor,
-        borderRadius: BorderRadius.circular(6),
-        border: Border.all(
-          color: borderColor,
-          width: 1,
+      onTap: isPast ? () => _playArchiveProgram(program) : null,
+      borderRadius: BorderRadius.circular(6),
+      child: Container(
+        width: 120,
+        height: 72,
+        margin: const EdgeInsets.only(right: 8),
+        padding: const EdgeInsets.all(8),
+        decoration: BoxDecoration(
+          color: backgroundColor,
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+            color: borderColor,
+            width: 1,
+          ),
         ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Row(
-            children: [
-              Text(
-                program.timeRange,
-                style: FontUtils.poppins(
-                  fontSize: 9,
-                  color: timeColor,
-                  fontWeight: FontWeight.w500,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Row(
+              children: [
+                Text(
+                  program.timeRange,
+                  style: FontUtils.poppins(
+                    fontSize: 9,
+                    color: timeColor,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
-              ),
-              const Spacer(),
-              if (isLive)
-                Row(
-                  children: [
-                    Container(
-                      width: 4,
-                      height: 4,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF27ae60),
-                        shape: BoxShape.circle,
+                const Spacer(),
+                if (isLive)
+                  Row(
+                    children: [
+                      Container(
+                        width: 4,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF27ae60),
+                          shape: BoxShape.circle,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 2),
-                    Text(
-                      '直播',
-                      style: FontUtils.poppins(
-                        fontSize: 8,
-                        color: timeColor,
-                        fontWeight: FontWeight.w600,
+                      const SizedBox(width: 2),
+                      Text(
+                        '直播',
+                        style: FontUtils.poppins(
+                          fontSize: 8,
+                          color: timeColor,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
-                    ),
-                  ],
-                ),
-            ],
-          ),
-          Text(
-            program.title,
-            style: FontUtils.poppins(
-              fontSize: 11,
-              fontWeight: FontWeight.w600,
-              color: textColor,
+                    ],
+                  ),
+              ],
             ),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
-          ),
-        ],
+            Text(
+              program.title,
+              style: FontUtils.poppins(
+                fontSize: 11,
+                fontWeight: FontWeight.w600,
+                color: textColor,
+              ),
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ],
+        ),
       ),
     );
   }
